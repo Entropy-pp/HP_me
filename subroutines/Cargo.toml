@@ -35,7 +35,7 @@ harness = false
 
 [features]
 # default = [ "parallel", "print-trace" ]
-default = ["parallel"]
+default = ["parallel", "print-trace"]
 # extensive sanity checks that are useful for debugging
 extensive_sanity_checks = [ ]
 parallel = [ 

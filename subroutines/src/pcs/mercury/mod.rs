@@ -94,9 +94,15 @@ impl<E: Pairing> PolynomialCommitmentScheme<E> for MercuryPCS<E> {
             },
         };
 
-        // multilinear 对应的 univariate 的 max_degree
-        let uni_degree:usize = 1 << supported_num_vars;
-        srs.borrow().trim(uni_degree)
+        /// multilinear 对应的 univariate 的 max_degree
+        if supported_num_vars % 2 == 1 {
+            let uni_degree:usize = 1 << (supported_num_vars + 1);
+            srs.borrow().trim(uni_degree)
+        }
+        else{
+            let uni_degree:usize = 1 << supported_num_vars;
+            srs.borrow().trim(uni_degree)
+        }
     }
 
     /// Generate a commitment for a polynomial.
@@ -111,7 +117,9 @@ impl<E: Pairing> PolynomialCommitmentScheme<E> for MercuryPCS<E> {
         let prover_param = prover_param.borrow();
         let commit_timer = start_timer!(|| "commit");
 
-        let f_poly = DensePolynomial::from_coefficients_vec(poly.evaluations.to_vec());
+        let poly1_padded = pad_mle_to_even_vars::<E>(&poly);
+        let f_poly = DensePolynomial::from_coefficients_vec(poly1_padded.evaluations.to_vec());
+
 
         if f_poly.degree() >= prover_param.powers_of_g.len() {
             return Err(PCSError::InvalidParameters(format!(
@@ -148,7 +156,6 @@ impl<E: Pairing> PolynomialCommitmentScheme<E> for MercuryPCS<E> {
         point: &Self::Point,
     ) -> Result<(Self::Proof, Self::Evaluation), PCSError> {
         let open_timer = start_timer!(|| format!("open mle with {} variable", polynomial.num_vars));
-        let f_poly = DensePolynomial::from_coefficients_vec(polynomial.evaluations.to_vec());
 
         if polynomial.num_vars() != point.len() {
             return Err(PCSError::InvalidParameters(format!(
@@ -157,6 +164,11 @@ impl<E: Pairing> PolynomialCommitmentScheme<E> for MercuryPCS<E> {
                 point.len()
             )));
         }
+
+        let (poly1_padded,point) = pad_mle_to_even_vars_and_point::<E>(&polynomial,&point);
+
+        let f_poly = DensePolynomial::from_coefficients_vec(poly1_padded.evaluations.to_vec());
+
 
         if f_poly.degree() >= prover_param.borrow().powers_of_g.len() {
             return Err(PCSError::InvalidParameters(format!(
@@ -336,8 +348,7 @@ impl<E: Pairing> PolynomialCommitmentScheme<E> for MercuryPCS<E> {
             b,
         };
 
-        let eval = evaluate_opt(polynomial, point);
-
+        let eval = evaluate_opt(&poly1_padded, &point.as_slice());
         end_timer!(open_timer);
         Ok((proof, eval))
     }
@@ -483,6 +494,8 @@ impl<E: Pairing> PolynomialCommitmentScheme<E> for MercuryPCS<E> {
     ) -> Result<bool, PCSError> {
         let check_time = start_timer!(|| "verify");
         let cha_time = start_timer!(|| "generate challenge");
+
+        let point = pad_point_to_even::<E>(&point);
 
         let mut transcript = IOPTranscript::<E::ScalarField>::new(b"HyperPlonkProtocol");
         let com_h = proof.proofs[0];
@@ -759,6 +772,49 @@ fn skip_leading_zeros<F: PrimeField, P: DenseUVPolynomial<F>>(p: &P) -> (usize, 
     (num_leading_zeros, &p.coeffs()[num_leading_zeros..])
 }
 
+fn pad_mle_to_even_vars<E: Pairing>(
+    mle: &Arc<DenseMultilinearExtension<E::ScalarField>>
+) -> Arc<DenseMultilinearExtension<E::ScalarField>> {
+    let num_vars = mle.num_vars;
+    if num_vars % 2 == 0 {
+        return mle.clone();
+    }
+
+    let mut evals = mle.evaluations.to_vec();
+    evals.extend(evals.clone()); // 复制一份，多一个变量相当于 evaluation 翻倍
+
+    Arc::new(DenseMultilinearExtension::from_evaluations_vec(num_vars + 1, evals))
+}
+
+fn pad_mle_to_even_vars_and_point<E: Pairing>(
+    mle: &Arc<DenseMultilinearExtension<E::ScalarField>>,
+    points: &[E::ScalarField],
+) -> (Arc<DenseMultilinearExtension<E::ScalarField>>, Vec<E::ScalarField>) {
+    let num_vars = mle.num_vars;
+    if num_vars % 2 == 0 {
+        return (mle.clone(), points.to_vec());
+    }
+
+    let mut evals = mle.evaluations.to_vec();
+    evals.extend(evals.clone()); // 复制一份，多一个变量相当于 evaluation 翻倍
+    let mut new_point = points.clone().to_vec();
+    new_point.push(E::ScalarField::zero());
+
+    (Arc::new(DenseMultilinearExtension::from_evaluations_vec(num_vars + 1, evals)), new_point)
+}
+
+fn pad_point_to_even<E: Pairing>(
+    points: &[E::ScalarField]
+) -> Vec<E::ScalarField> {
+    let num_vars = points.len();
+    if num_vars % 2 == 0 {
+        return points.to_vec();
+    }
+
+    let mut new_point = points.clone().to_vec();
+    new_point.push(E::ScalarField::zero());
+    new_point
+}
 
 
 #[cfg(test)]
@@ -815,6 +871,19 @@ mod tests {
         // assert!(!MultilinearKzgPCS::verify(
         //     &vk, &com, &point, &value, &proof
         // )?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_odd()-> Result<(), PCSError> {
+        let mut rng = test_rng();
+        let params = MercuryPCS::<E>::gen_srs_for_testing(&mut rng, 12)?;
+        // normal polynomials
+        let poly1:Arc<DenseMultilinearExtension<Fr>> =Arc::new(DenseMultilinearExtension::rand(11, &mut rng));
+        // println!("Poly: {:?}", poly1.evaluations.to_vec());
+        // println!("  ");
+        test_single_helper(&params, &poly1, &mut rng)?;
 
         Ok(())
     }
