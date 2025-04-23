@@ -878,7 +878,7 @@ mod tests {
     #[test]
     fn test_odd()-> Result<(), PCSError> {
         let mut rng = test_rng();
-        let params = MercuryPCS::<E>::gen_srs_for_testing(&mut rng, 12)?;
+        let params = MercuryPCS::<E>::gen_srs_for_testing(&mut rng, 11)?;
         // normal polynomials
         let poly1:Arc<DenseMultilinearExtension<Fr>> =Arc::new(DenseMultilinearExtension::rand(11, &mut rng));
         // println!("Poly: {:?}", poly1.evaluations.to_vec());

@@ -97,6 +97,10 @@ impl<E: Pairing> StructuredReferenceString<E> for MercuryUniversalParams<E> {
     fn gen_srs_for_testing<R: Rng>(rng: &mut R, max_degree: usize) -> Result<Self, PCSError> {
         let setup_time = start_timer!(|| format!("Mercury::Setup with degree {}", max_degree));
         /// isomorphic univariate degree = 1 << num_var;
+        let mut max_degree = max_degree;
+        if max_degree % 2 == 1 {
+            max_degree = max_degree + 1;
+        }
         let max_degree = 1 << max_degree;
         let beta = E::ScalarField::rand(rng);
         let g = E::G1::rand(rng);
